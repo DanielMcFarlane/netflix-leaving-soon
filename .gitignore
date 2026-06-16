@@ -1,0 +1,12 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.zip
+*.xpi
+web-ext-artifacts/
+
+# Node modules
+node_modules/
+npm-debug.log

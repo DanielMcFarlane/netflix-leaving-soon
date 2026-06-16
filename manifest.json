@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Netflix Leaving Soon",
+  "version": "1.0.2",
+  "description": "Scans netflix list and creates a list of titles that are leaving soon.",
+  "permissions": ["activeTab", "scripting", "tabs"],
+  "host_permissions": ["*://*.netflix.com/*"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "netflix-leaving-soon@dan.dev",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "action": {
+    "default_title": "Check Titles",
+    "default_icon": "assets/icon.png"
+  },
+  "background": {
+    "scripts": ["js/background.js"]
+  },
+  "icons": {
+    "128": "assets/icon.png"
+  }
+}
