@@ -43,11 +43,11 @@
   padding: 0;
   border: 1px solid #333;
   border-radius: 12px;
-  max-height: 75vh;
-  overflow-y: auto;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
   font-family: -apple-system, sans-serif;
-  min-width: 360px;
-  max-width: 450px;
+  box-sizing: border-box;
 }
 
 #nflx-modal::backdrop {
@@ -61,6 +61,10 @@
   top: 0;
   background: rgba(20, 20, 20, 0.95);
   border-bottom: 1px solid #2a2a2a;
+  z-index: 1;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .nflx-modal-title {
@@ -71,25 +75,36 @@
 }
 
 .nflx-modal-body-empty {
-  padding: 32px 24px;
+  padding: 0 24px;
   text-align: center;
   color: #a3a3a3;
   font-size: 15px;
   line-height: 1.5;
+  height: 100px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .nflx-list {
   list-style: none;
   padding: 16px 0;
   margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 100px;
 }
 
 .nflx-list-item {
   position: relative;
   padding: 10px 24px 10px 44px;
   line-height: 1.4;
-  word-break: break-word;
   font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nflx-list-item::before {
@@ -105,10 +120,16 @@
 
 .nflx-modal-footer {
   padding: 20px 24px 24px;
+  margin-top: auto;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .nflx-modal-form {
   margin: 0;
+  display: block;
+  width: 100%;
 }
 
 #nflx-modal-btn {
@@ -121,6 +142,8 @@
   cursor: pointer;
   font-size: 16px;
   font-weight: 600;
+  box-sizing: border-box;
+  display: block;
 }
 
 #nflx-modal-btn:hover {
