@@ -18,6 +18,19 @@
   }
 }
 
+/* Hide scroll bars */
+/* Firefox */
+html:has(.nflx-loader-overlay),
+body:has(.nflx-loader-overlay) {
+  scrollbar-width: none;
+}
+
+/* Chrome, Safari */
+html:has(.nflx-loader-overlay)::-webkit-scrollbar,
+body:has(.nflx-loader-overlay)::-webkit-scrollbar {
+  display: none;
+}
+
 /* Loading overlay */
 .nflx-loader-overlay {
   position: fixed;

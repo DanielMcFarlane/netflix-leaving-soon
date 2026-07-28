@@ -9,10 +9,10 @@
 
 (async function () {
   const CONFIG = {
-    INITIAL_LOAD_DELAY: 2000,
-    SCROLL_STEP: 500,
-    MAX_IDLE_CHECKS: 6,
-    SCROLL_INTERVAL: 250,
+    INITIAL_LOAD_DELAY: 1000,
+    SCROLL_STEP: 400,
+    MAX_IDLE_CHECKS: 40,
+    SCROLL_INTERVAL: 50,
   };
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -34,8 +34,12 @@ window.NFLX.Model = (function () {
       }
     });
 
+    const sortedTitles = Array.from(uniqueTitles.values()).sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+
     return {
-      titles: Array.from(uniqueTitles.values()),
+      titles: sortedTitles,
       scanned: true,
     };
   };
