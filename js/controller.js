@@ -10,45 +10,70 @@
 (async function () {
   const CONFIG = {
     INITIAL_LOAD_DELAY: 1000,
-    SCROLL_STEP: 400,
-    MAX_IDLE_CHECKS: 40,
-    SCROLL_INTERVAL: 50,
+    CLICK_MIN: 400,
+    CLICK_MAX: 850,
+    MAX_IDLE_CHECKS: 4,
+    FINAL_SETTLE_DELAY: 1000,
   };
 
-  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Generates a random delay between min and max to simulate human interaction
+  const delay = (min, max) => {
+    const ms = max ? Math.floor(Math.random() * (max - min + 1) + min) : min;
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  };
 
-  const scrollToBottom = async () => {
+  const scrollHorizontally = async () => {
     await delay(CONFIG.INITIAL_LOAD_DELAY);
 
-    let lastHeight = document.body.scrollHeight;
+    const seenIds = new Set();
+    const allCards = new Map();
+
     let unchangedCount = 0;
 
-    // Netflix lazy-loads titles while scrolling
-    // Loop until the page height doesn't change after a certain number of checks
     while (unchangedCount < CONFIG.MAX_IDLE_CHECKS) {
-      window.scrollBy(0, CONFIG.SCROLL_STEP);
-      await delay(CONFIG.SCROLL_INTERVAL);
+      const visibleCards = window.NFLX.Model.extractVisibleListCards();
+      let newTitleFound = false;
 
-      const currentHeight = document.body.scrollHeight;
-      const reachedBottom =
-        Math.ceil(window.scrollY + window.innerHeight) >= currentHeight;
-
-      if (currentHeight > lastHeight) {
-        lastHeight = currentHeight;
-        unchangedCount = 0;
-      } else if (reachedBottom) {
+      if (visibleCards.length === 0) {
         unchangedCount++;
+        await delay(CONFIG.CLICK_MIN, CONFIG.CLICK_MAX);
+        continue;
       }
+
+      for (const { id, title } of visibleCards) {
+        if (seenIds.has(id)) continue;
+
+        seenIds.add(id);
+        newTitleFound = true;
+        allCards.set(id, { id, title });
+      }
+
+      unchangedCount = newTitleFound ? 0 : unchangedCount + 1;
+
+      window.NFLX.Model.scrollMyListCarousel();
+
+      await delay(CONFIG.CLICK_MIN, CONFIG.CLICK_MAX);
     }
-    window.scrollTo(0, 0);
+
+    await delay(CONFIG.FINAL_SETTLE_DELAY);
+    const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
+
+    const titles = Array.from(allCards.values())
+      .filter(({ id }) => leavingSoonData.has(id))
+      .sort((a, b) => a.title.localeCompare(b.title));
+
+    return {
+      titles,
+      scanned: true,
+    };
   };
 
   const init = async () => {
     let loadScreen;
+
     try {
       loadScreen = window.NFLX.View.showLoadingScreen();
-      await scrollToBottom();
-      const scanResult = window.NFLX.Model.scrapeTitles();
+      const scanResult = await scrollHorizontally();
       window.NFLX.View.buildAndShowModal(scanResult);
     } catch (error) {
       console.error("Netflix Leaving Soon Extension Error:", error);
@@ -56,5 +81,6 @@
       loadScreen?.remove();
     }
   };
+
   init();
 })();
