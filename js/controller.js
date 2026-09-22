@@ -8,63 +8,61 @@
 //
 
 (async function () {
-  const CONFIG = {
-    INITIAL_LOAD_DELAY: 1000,
-    CLICK_MIN: 400,
-    CLICK_MAX: 850,
-    MAX_IDLE_CHECKS: 4,
-    FINAL_SETTLE_DELAY: 1000,
-  };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Generates a random delay between min and max to simulate human interaction
-  const delay = (min, max) => {
-    const ms = max ? Math.floor(Math.random() * (max - min + 1) + min) : min;
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  };
-
-  const scrollHorizontally = async () => {
-    await delay(CONFIG.INITIAL_LOAD_DELAY);
-
-    const seenIds = new Set();
-    const allCards = new Map();
-
-    let unchangedCount = 0;
-
-    while (unchangedCount < CONFIG.MAX_IDLE_CHECKS) {
-      const visibleCards = window.NFLX.Model.extractVisibleListCards();
-      let newTitleFound = false;
-
-      if (visibleCards.length === 0) {
-        unchangedCount++;
-        await delay(CONFIG.CLICK_MIN, CONFIG.CLICK_MAX);
-        continue;
-      }
-
-      for (const { id, title } of visibleCards) {
-        if (seenIds.has(id)) continue;
-
-        seenIds.add(id);
-        newTitleFound = true;
-        allCards.set(id, { id, title });
-      }
-
-      unchangedCount = newTitleFound ? 0 : unchangedCount + 1;
-
-      window.NFLX.Model.scrollMyListCarousel();
-
-      await delay(CONFIG.CLICK_MIN, CONFIG.CLICK_MAX);
+  const scanList = async () => {
+    const found = window.NFLX.Model.findCarousel();
+    if (!found) {
+      return { cards: [], scanned: false, heading: null, container: null };
     }
 
-    await delay(CONFIG.FINAL_SETTLE_DELAY);
-    const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
+    const collected = new Map();
+    let container = found.container;
+    let scansWithoutNewTitles = 0;
+    let scan = 0;
+    const EMERGENCY_STOP_LIMIT = 250;
+    const NO_NEW_TITLES_LIMIT = 8;
 
-    const titles = Array.from(allCards.values())
-      .filter(({ id }) => leavingSoonData.has(id))
-      .sort((a, b) => a.title.localeCompare(b.title));
+    while (
+      scan < EMERGENCY_STOP_LIMIT &&
+      scansWithoutNewTitles < NO_NEW_TITLES_LIMIT
+    ) {
+      scan++;
+
+      const current = window.NFLX.Model.findCarousel();
+      if (current?.container) container = current.container;
+
+      const cards = window.NFLX.Model.getCards(container);
+      const before = collected.size;
+
+      for (const card of cards) {
+        if (!collected.has(card.key)) collected.set(card.key, card);
+      }
+
+      const added = collected.size - before;
+
+      scansWithoutNewTitles = added === 0 ? scansWithoutNewTitles + 1 : 0;
+
+      const next = window.NFLX.Model.findNextControl(container);
+      if (!next) break;
+
+      try {
+        next.click();
+      } catch (error) {
+        break;
+      }
+
+      await sleep(850);
+    }
+
+    const allCards = [...collected.values()];
+    const refreshed = window.NFLX.Model.findCarousel() || found;
 
     return {
-      titles,
+      cards: allCards,
       scanned: true,
+      heading: refreshed.heading,
+      container: refreshed.container,
     };
   };
 
@@ -73,8 +71,34 @@
 
     try {
       loadScreen = window.NFLX.View.showLoadingScreen();
-      const scanResult = await scrollHorizontally();
-      window.NFLX.View.buildAndShowModal(scanResult);
+
+      const scanResult = await scanList();
+      const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
+
+      // Filter and sort the cards that are leaving soon
+      const titles = scanResult.cards
+        .filter(
+          (card) =>
+            card.id && (card.hasLeavingBadge || leavingSoonData.has(card.id)),
+        )
+        .map((card) => ({
+          id: card.id,
+          title: card.title || leavingSoonData.get(card.id)?.title || "",
+        }))
+        .sort((a, b) => a.title.localeCompare(b.title));
+
+      if (scanResult.scanned) {
+        window.NFLX.View.buildGrid(
+          scanResult.heading,
+          scanResult.container,
+          scanResult.cards,
+        );
+      }
+
+      window.NFLX.View.buildAndShowModal({
+        titles,
+        scanned: scanResult.scanned,
+      });
     } catch (error) {
       console.error("Netflix Leaving Soon Extension Error:", error);
     } finally {

@@ -98,7 +98,6 @@ window.NFLX.View = (function () {
     document.getElementById("nflx-modal")?.remove();
 
     const hasList = titles.length > 0;
-
     const headerText = hasList
       ? "Leaving Soon"
       : !scanned
@@ -123,8 +122,73 @@ window.NFLX.View = (function () {
     dialog.showModal();
   };
 
+  const buildGrid = (heading, container, cards) => {
+    if (!cards.length) return false;
+
+    document.getElementById("netflix-mylist-grid")?.remove();
+
+    const title = createElement("h2", {
+      textContent: "My List",
+      style:
+        "color: #fff; font-size: 1.6rem; font-weight: 600; margin: 10px 0 20px;",
+    });
+
+    const gridItems = cards.map((card) => {
+      const imgProps = {
+        src: card.src,
+        alt: card.title,
+      };
+
+      if (card.srcset) imgProps.srcset = card.srcset;
+
+      const img = createElement("img", imgProps);
+      const itemProps = {
+        className: "nflx-grid-card",
+        style: `cursor: ${card.href ? "pointer" : "default"};`,
+      };
+
+      if (card.href) itemProps.href = card.href;
+
+      return createElement(card.href ? "a" : "div", itemProps, [img]);
+    });
+
+    const grid = createElement(
+      "div",
+      {
+        style:
+          "display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px 10px; width: 100%; padding: 20px 0;",
+      },
+      gridItems,
+    );
+
+    const wrapper = createElement(
+      "section",
+      {
+        id: "netflix-mylist-grid",
+        style: "padding: 10px 3vw 50px; box-sizing: border-box; width: 100%;",
+      },
+      [title, grid],
+    );
+
+    let originalSection = heading.parentElement;
+    while (originalSection && !originalSection.contains(container)) {
+      originalSection = originalSection.parentElement;
+    }
+
+    if (!originalSection) originalSection = container;
+
+    originalSection.style.display = "none";
+    originalSection.parentNode.insertBefore(
+      wrapper,
+      originalSection.nextSibling,
+    );
+
+    return true;
+  };
+
   return {
     showLoadingScreen,
     buildAndShowModal,
+    buildGrid,
   };
 })();
