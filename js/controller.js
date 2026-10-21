@@ -10,59 +10,126 @@
 (async function () {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  const waitForSettle = async (container, maxMs = 3500) => {
+    const start = Date.now();
+    let previousCount = -1;
+    let stablePolls = 0;
+
+    await sleep(300);
+
+    while (Date.now() - start < maxMs) {
+      const currentCount = container.querySelectorAll(
+        "[data-virtual-slot]",
+      ).length;
+      stablePolls = currentCount === previousCount ? stablePolls + 1 : 0;
+      previousCount = currentCount;
+
+      if (stablePolls >= 2) break;
+
+      await sleep(200);
+    }
+  };
+
+  const scrollPageDown = () => {
+    const startY = window.scrollY;
+    window.scrollTo({
+      top: startY + window.innerHeight * 0.8,
+      behavior: "instant",
+    });
+    return window.scrollY > startY + 1;
+  };
+
   const scanList = async () => {
-    const found = window.NFLX.Model.findCarousel();
-    if (!found) {
+    const initialCarousel = window.NFLX.Model.findCarousel();
+    if (!initialCarousel) {
       return { cards: [], scanned: false, heading: null, container: null };
     }
 
-    const collected = new Map();
-    let container = found.container;
-    let scansWithoutNewTitles = 0;
-    let scan = 0;
+    const collectedCards = new Map();
+    let container = initialCarousel.container;
+    let idleScans = 0;
+    let scanIteration = 0;
     const EMERGENCY_STOP_LIMIT = 250;
-    const NO_NEW_TITLES_LIMIT = 8;
+    const IDLE_LIMIT = 5;
 
-    while (
-      scan < EMERGENCY_STOP_LIMIT &&
-      scansWithoutNewTitles < NO_NEW_TITLES_LIMIT
-    ) {
-      scan++;
+    const startScrollY = window.scrollY;
 
-      const current = window.NFLX.Model.findCarousel();
-      if (current?.container) container = current.container;
+    // Keep the list in the viewport so Netflix keeps it mounted and renders its navigation arrows
+    try {
+      (initialCarousel.heading || initialCarousel.container).scrollIntoView({
+        block: "center",
+        behavior: "instant",
+      });
+    } catch {}
+
+    while (scanIteration < EMERGENCY_STOP_LIMIT && idleScans < IDLE_LIMIT) {
+      scanIteration++;
+
+      const activeCarousel = window.NFLX.Model.findCarousel();
+
+      if (activeCarousel?.container) container = activeCarousel.container;
 
       const cards = window.NFLX.Model.getCards(container);
-      const before = collected.size;
+      const previousCardCount = collectedCards.size;
 
       for (const card of cards) {
-        if (!collected.has(card.key)) collected.set(card.key, card);
+        const existing = collectedCards.get(card.key);
+
+        if (!existing) {
+          collectedCards.set(card.key, card);
+        } else if (card.hasLeavingBadge && !existing.hasLeavingBadge) {
+          existing.hasLeavingBadge = true;
+        }
       }
 
-      const added = collected.size - before;
+      const newCardsAdded = collectedCards.size - previousCardCount;
+      idleScans = newCardsAdded === 0 ? idleScans + 1 : 0;
 
-      scansWithoutNewTitles = added === 0 ? scansWithoutNewTitles + 1 : 0;
-
-      const next = window.NFLX.Model.findNextControl(container);
-      if (!next) break;
-
+      // Force Netflix to render the UI arrows by simulating a user hover
       try {
-        next.click();
-      } catch (error) {
-        break;
+        container.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        container.dispatchEvent(new MouseEvent("mouseenter"));
+      } catch {}
+
+      const nextArrows = window.NFLX.Model.findNextControls(container);
+      let progressMade = false;
+
+      for (const arrow of nextArrows) {
+        try {
+          arrow.click();
+          progressMade = true;
+        } catch {}
       }
 
-      await sleep(850);
+      // Prevent unmounting carousel rows by only scrolling downwards when in a grid layout
+      if (!nextArrows.length && scrollPageDown()) progressMade = true;
+
+      if (!progressMade && newCardsAdded === 0) break;
+
+      await waitForSettle(container);
     }
 
-    const allCards = [...collected.values()];
-    const refreshed = window.NFLX.Model.findCarousel() || found;
+    const finalCarousel = window.NFLX.Model.findCarousel();
+
+    if (finalCarousel?.container) container = finalCarousel.container;
+
+    for (const card of window.NFLX.Model.getCards(container)) {
+      const existing = collectedCards.get(card.key);
+
+      if (!existing) collectedCards.set(card.key, card);
+      else if (card.hasLeavingBadge) existing.hasLeavingBadge = true;
+    }
+
+    window.scrollTo({ top: startScrollY, behavior: "instant" });
+
+    const finalCarouselState =
+      window.NFLX.Model.findCarousel() || initialCarousel;
 
     return {
-      cards: allCards,
+      cards: [...collectedCards.values()],
       scanned: true,
-      heading: refreshed.heading,
-      container: refreshed.container,
+      heading: finalCarouselState.heading,
+      container: finalCarouselState.container,
     };
   };
 
@@ -75,8 +142,7 @@
       const scanResult = await scanList();
       const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
 
-      // Filter and sort the cards that are leaving soon
-      const titles = scanResult.cards
+      const leavingSoonTitles = scanResult.cards
         .filter(
           (card) =>
             card.id && (card.hasLeavingBadge || leavingSoonData.has(card.id)),
@@ -87,7 +153,8 @@
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 
-      if (scanResult.scanned) {
+      // The grid injection requires a heading element to anchor itself to
+      if (scanResult.scanned && scanResult.heading) {
         window.NFLX.View.buildGrid(
           scanResult.heading,
           scanResult.container,
@@ -96,7 +163,7 @@
       }
 
       window.NFLX.View.buildAndShowModal({
-        titles,
+        titles: leavingSoonTitles,
         scanned: scanResult.scanned,
       });
     } catch (error) {

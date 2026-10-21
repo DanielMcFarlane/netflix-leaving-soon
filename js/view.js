@@ -28,7 +28,7 @@ window.NFLX.View = (function () {
   };
 
   const showLoadingScreen = () => {
-    const loadScreen = createElement(
+    const loadingOverlay = createElement(
       "div",
       { className: "nflx-loader-overlay" },
       [
@@ -40,8 +40,8 @@ window.NFLX.View = (function () {
       ],
     );
 
-    document.body.appendChild(loadScreen);
-    return loadScreen;
+    document.body.appendChild(loadingOverlay);
+    return loadingOverlay;
   };
 
   const createModalHeader = (headerText) =>
@@ -104,12 +104,12 @@ window.NFLX.View = (function () {
         ? "Something Went Wrong"
         : "No Titles Found";
 
-    const dialog = createElement(
+    const modalDialog = createElement(
       "dialog",
       {
         id: "nflx-modal",
         "aria-labelledby": "nflx-modal-title",
-        onclose: (e) => e.target.remove(),
+        onclose: (event) => event.target.remove(),
       },
       [
         createModalHeader(headerText),
@@ -118,16 +118,16 @@ window.NFLX.View = (function () {
       ],
     );
 
-    document.body.appendChild(dialog);
-    dialog.showModal();
+    document.body.appendChild(modalDialog);
+    modalDialog.showModal();
   };
 
-  const buildGrid = (heading, container, cards) => {
+  const buildGrid = (headingElement, containerElement, cards) => {
     if (!cards.length) return false;
 
     document.getElementById("netflix-mylist-grid")?.remove();
 
-    const title = createElement("h2", {
+    const gridTitle = createElement("h2", {
       textContent: "My List",
       style:
         "color: #fff; font-size: 1.6rem; font-weight: 600; margin: 10px 0 20px;",
@@ -141,7 +141,7 @@ window.NFLX.View = (function () {
 
       if (card.srcset) imgProps.srcset = card.srcset;
 
-      const img = createElement("img", imgProps);
+      const cardImage = createElement("img", imgProps);
       const itemProps = {
         className: "nflx-grid-card",
         style: `cursor: ${card.href ? "pointer" : "default"};`,
@@ -149,10 +149,10 @@ window.NFLX.View = (function () {
 
       if (card.href) itemProps.href = card.href;
 
-      return createElement(card.href ? "a" : "div", itemProps, [img]);
+      return createElement(card.href ? "a" : "div", itemProps, [cardImage]);
     });
 
-    const grid = createElement(
+    const cardGrid = createElement(
       "div",
       {
         style:
@@ -161,26 +161,30 @@ window.NFLX.View = (function () {
       gridItems,
     );
 
-    const wrapper = createElement(
+    const gridWrapper = createElement(
       "section",
       {
         id: "netflix-mylist-grid",
         style: "padding: 10px 3vw 50px; box-sizing: border-box; width: 100%;",
       },
-      [title, grid],
+      [gridTitle, cardGrid],
     );
 
-    let originalSection = heading.parentElement;
-    while (originalSection && !originalSection.contains(container)) {
-      originalSection = originalSection.parentElement;
+    // Locate the highest level container of the original row to hide and replace it
+    let originalSectionContainer = headingElement.parentElement;
+    while (
+      originalSectionContainer &&
+      !originalSectionContainer.contains(containerElement)
+    ) {
+      originalSectionContainer = originalSectionContainer.parentElement;
     }
 
-    if (!originalSection) originalSection = container;
+    if (!originalSectionContainer) originalSectionContainer = containerElement;
 
-    originalSection.style.display = "none";
-    originalSection.parentNode.insertBefore(
-      wrapper,
-      originalSection.nextSibling,
+    originalSectionContainer.style.display = "none";
+    originalSectionContainer.parentNode.insertBefore(
+      gridWrapper,
+      originalSectionContainer.nextSibling,
     );
 
     return true;
