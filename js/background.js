@@ -4,7 +4,7 @@
 //
 //  Created by Daniel McFarlane on 10/06/2025
 //
-//  Contains the background logic for the extension.
+//  Manages extension icon visibility and injects core scripts on click.
 //
 
 browser.action.disable(); // Disable the extension icon by default until a Netflix tab is detected
@@ -27,6 +27,7 @@ browser.tabs.onActivated.addListener(async ({ tabId }) => {
 browser.action.onClicked.addListener(async ({ id }) => {
   try {
     const target = { tabId: id };
+
     await Promise.all([
       browser.scripting.insertCSS({ target, files: ["css/style.css"] }),
       browser.scripting.executeScript({

@@ -10,149 +10,221 @@
 window.NFLX = window.NFLX || {};
 
 window.NFLX.Model = (function () {
+  const LEAVING_REGEX = /leaving(?:[.\s_-]|%2e|%20)?soon/i;
+
   const getLeavingSoonDetails = () => {
-    const leavingSoon = new Map();
+    const leavingSoonMap = new Map();
     const scripts = Array.from(document.scripts);
 
     for (const script of scripts) {
-      const text = script.textContent || "";
-      if (!text.includes("leaving.soon")) continue;
+      const scriptText = script.textContent || "";
 
-      // Gets the video ID from the script content
-      const entityRegex = /(?:[A-Za-z0-9_]+):(?:[A-Za-z0-9_]+_)?Video:(\d+)_/g;
+      if (!LEAVING_REGEX.test(scriptText)) continue;
+
+      const videoIdRegex = /Video:(\d+)(?:_|\b)/g;
+      const videoIdPositions = [];
       let match;
 
-      while ((match = entityRegex.exec(text)) !== null) {
-        const videoId = match[1];
-        const start = match.index;
-        const entityText = text.slice(start, start + 1500); // Extract a chunk of text around the match without parsing the entire script
+      while ((match = videoIdRegex.exec(scriptText)) !== null) {
+        videoIdPositions.push({ id: match[1], index: match.index });
+      }
 
-        if (!entityText.includes("leaving.soon")) continue;
+      // Isolate the text for each video so data doesn't mix
+      for (let i = 0; i < videoIdPositions.length; i++) {
+        const { id: videoId, index: startIndex } = videoIdPositions[i];
+        const endIndex = Math.min(
+          videoIdPositions[i + 1]
+            ? videoIdPositions[i + 1].index
+            : scriptText.length,
+          startIndex + 20000,
+        );
+        const videoTextRegion = scriptText.slice(startIndex, endIndex);
 
-        let title = null;
-        const titleMatch = entityText.match(
+        if (!LEAVING_REGEX.test(videoTextRegion)) continue;
+
+        let videoTitle = null;
+        const titleMatchResult = videoTextRegion.match(
           /"displayString":"((?:\\.|[^"\\])*)"/,
         );
 
-        if (titleMatch) {
+        if (titleMatchResult) {
           try {
-            title = JSON.parse(`"${titleMatch[1]}"`);
+            videoTitle = JSON.parse(`"${titleMatchResult[1]}"`);
           } catch {
-            title = titleMatch[1];
+            videoTitle = titleMatchResult[1];
           }
         }
 
-        leavingSoon.set(videoId, { id: videoId, title: title || videoId });
+        const existingRecord = leavingSoonMap.get(videoId);
+        leavingSoonMap.set(videoId, {
+          id: videoId,
+          title: existingRecord?.title || videoTitle || videoId,
+        });
       }
     }
 
-    return leavingSoon;
+    // Merge titles captured by hook.js from dynamically loaded network responses
+    try {
+      const rawInjectedData =
+        document.documentElement.getAttribute("data-nflx-leaving");
+      const hookedTitles = rawInjectedData ? JSON.parse(rawInjectedData) : [];
+
+      for (const item of hookedTitles) {
+        if (!item?.id) continue;
+
+        const existingRecord = leavingSoonMap.get(item.id);
+        leavingSoonMap.set(item.id, {
+          id: item.id,
+          title: existingRecord?.title || item.title || item.id,
+        });
+      }
+    } catch {}
+
+    return leavingSoonMap;
   };
 
   const findMyListHeading = () => {
     return [...document.querySelectorAll("h1,h2,h3,h4,div,span")].find(
-      (el) => el.children.length === 0 && el.textContent.trim() === "My List",
+      (element) =>
+        element.children.length === 0 &&
+        element.textContent.trim() === "My List" &&
+        // Ignore the main site navigation menu
+        !element.closest('nav, header, [role="navigation"], [role="menubar"]'),
     );
   };
 
   const findCarousel = () => {
-    const heading = findMyListHeading();
-    if (!heading) return null;
+    const headingElement = findMyListHeading();
 
-    let container = heading.parentElement;
+    if (headingElement) {
+      let currentContainer = headingElement.parentElement;
 
-    // Traverse up to 12 levels of parent elements to find a container with virtual slots
-    for (let i = 0; i < 12 && container; i++) {
-      if (container.querySelectorAll("[data-virtual-slot]").length) {
-        return { heading, container };
+      for (let i = 0; i < 12 && currentContainer; i++) {
+        if (currentContainer.querySelectorAll("[data-virtual-slot]").length) {
+          return { heading: headingElement, container: currentContainer };
+        }
+        currentContainer = currentContainer.parentElement;
       }
-      container = container.parentElement;
+    }
+
+    // Handle regional languages by falling back to the URL path
+    if (/my-list/i.test(location.pathname)) {
+      const firstVirtualSlot = document.querySelector("[data-virtual-slot]");
+
+      if (firstVirtualSlot) {
+        const fallbackContainer =
+          firstVirtualSlot.closest(".mainView, main, [role='main']") ||
+          document.body;
+        return { heading: null, container: fallbackContainer };
+      }
     }
 
     return null;
   };
 
-  const getCards = (container) => {
-    const slots = [...container.querySelectorAll("[data-virtual-slot]")];
-    const results = [];
+  const getCards = (carouselContainer) => {
+    const virtualSlots = [
+      ...carouselContainer.querySelectorAll("[data-virtual-slot]"),
+    ];
+    const extractedCards = [];
 
-    for (const slot of slots) {
-      const img = slot.querySelector("img");
-      if (!img || !img.src) continue;
-
-      const link = slot.querySelector("a[href]");
-      const href = link?.href || "";
-      // Extract the video ID from the href or from the image src if available
-      const id =
-        href?.match(/\/(?:watch|title)\/(\d+)/)?.[1] ||
-        href?.match(/jbv=(\d+)/)?.[1] ||
+    for (const slotElement of virtualSlots) {
+      const cardLink = slotElement.querySelector("a[href]");
+      const cardUrl = cardLink?.href || "";
+      const videoId =
+        cardUrl.match(/\/(?:watch|title)\/(\d+)/)?.[1] ||
+        cardUrl.match(/jbv=(\d+)/)?.[1] ||
         "";
 
-      const key = id || href || img.src;
-      if (!key) continue;
+      const cardImage = slotElement.querySelector("img");
 
-      const hasLeavingBadge =
-        slot.textContent?.toLowerCase().includes("leaving soon") ||
-        link
-          ?.getAttribute("data-ui-tracking-context")
-          ?.includes("leaving.soon") ||
-        slot.innerHTML?.includes("leaving.soon");
+      // Record cards even if their images have not loaded yet
+      const uniqueKey = videoId || cardUrl || cardImage?.src || "";
 
-      results.push({
-        key,
-        id,
-        href,
-        src: img.src,
-        srcset: img.srcset || "",
-        title: img.alt || link?.getAttribute("aria-label") || "",
-        hasLeavingBadge: Boolean(hasLeavingBadge),
+      if (!uniqueKey) continue;
+
+      let hasLeavingBadge = false;
+      try {
+        hasLeavingBadge =
+          LEAVING_REGEX.test(slotElement.textContent || "") ||
+          LEAVING_REGEX.test(slotElement.innerHTML || "") ||
+          LEAVING_REGEX.test(
+            (() => {
+              try {
+                return decodeURIComponent(slotElement.innerHTML || "");
+              } catch {
+                return "";
+              }
+            })(),
+          );
+      } catch {
+        hasLeavingBadge = false;
+      }
+
+      extractedCards.push({
+        key: uniqueKey,
+        id: videoId,
+        href: cardUrl,
+        src: cardImage?.src || "",
+        srcset: cardImage?.srcset || "",
+        title:
+          cardImage?.alt ||
+          cardLink?.getAttribute("aria-label") ||
+          cardLink?.textContent?.trim() ||
+          "",
+        hasLeavingBadge,
       });
     }
 
-    return results;
+    return extractedCards;
   };
 
-  const findNextControl = (container) => {
-    const candidates = [
-      ...container.querySelectorAll("button"),
-      ...container.querySelectorAll('[role="button"]'),
-      ...container.querySelectorAll("a"),
+  const isVisible = (element) => {
+    const boundingBox = element.getBoundingClientRect();
+    return boundingBox.width > 0 && boundingBox.height > 0;
+  };
+
+  const isDisabled = (element) =>
+    element.disabled === true ||
+    element.getAttribute("aria-disabled") === "true" ||
+    element.hasAttribute("disabled");
+
+  // Ignore buttons inside title cards to prevent accidental clicks
+  const findNextControls = (carouselContainer) => {
+    const buttonCandidates = [
+      ...carouselContainer.querySelectorAll('button, [role="button"]'),
     ];
 
-    let next = candidates.find((el) => {
-      const description = [
-        el.getAttribute("aria-label"),
-        el.getAttribute("title"),
-        el.getAttribute("data-uia"),
-        typeof el.className === "string" ? el.className : "",
-        el.textContent,
+    return buttonCandidates.filter((buttonElement) => {
+      if (buttonElement.closest("[data-virtual-slot], a")) return false;
+
+      if (isDisabled(buttonElement) || !isVisible(buttonElement)) return false;
+
+      const elementLabel = [
+        buttonElement.getAttribute("aria-label"),
+        buttonElement.getAttribute("title"),
+        buttonElement.getAttribute("data-uia"),
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
+      const elementClass = (
+        typeof buttonElement.className === "string"
+          ? buttonElement.className
+          : ""
+      ).toLowerCase();
+
       return (
-        description.includes("next") ||
-        description.includes("right") ||
-        description.includes("forward")
+        /\b(next|see more|more titles|scroll right|forward)\b/.test(
+          elementLabel,
+        ) ||
+        /handle-?next|next-?(btn|button|page|arrow)|slider-?next/.test(
+          elementClass,
+        ) ||
+        /handle-?next|next-?(btn|button|page|arrow)/.test(elementLabel)
       );
     });
-
-    if (next) return next;
-
-    const containerRect = container.getBoundingClientRect();
-
-    // Find the rightmost button that is visible and within the container's bounds
-    const rightEdgeCandidates = candidates.filter((el) => {
-      const rect = el.getBoundingClientRect();
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        rect.right >= containerRect.right - 120
-      );
-    });
-
-    return rightEdgeCandidates.at(-1) || null;
   };
 
   return {
@@ -160,6 +232,6 @@ window.NFLX.Model = (function () {
     findMyListHeading,
     findCarousel,
     getCards,
-    findNextControl,
+    findNextControls,
   };
 })();

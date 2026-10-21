@@ -11,58 +11,76 @@
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const scanList = async () => {
-    const found = window.NFLX.Model.findCarousel();
-    if (!found) {
+    const initialCarousel = window.NFLX.Model.findCarousel();
+    if (!initialCarousel) {
       return { cards: [], scanned: false, heading: null, container: null };
     }
 
-    const collected = new Map();
-    let container = found.container;
-    let scansWithoutNewTitles = 0;
-    let scan = 0;
+    const collectedCards = new Map();
+    let container = initialCarousel.container;
+    let idleScans = 0;
+    let scanIteration = 0;
     const EMERGENCY_STOP_LIMIT = 250;
-    const NO_NEW_TITLES_LIMIT = 8;
+    const IDLE_LIMIT = 8;
 
-    while (
-      scan < EMERGENCY_STOP_LIMIT &&
-      scansWithoutNewTitles < NO_NEW_TITLES_LIMIT
-    ) {
-      scan++;
+    while (scanIteration < EMERGENCY_STOP_LIMIT && idleScans < IDLE_LIMIT) {
+      scanIteration++;
 
-      const current = window.NFLX.Model.findCarousel();
-      if (current?.container) container = current.container;
+      const activeCarousel = window.NFLX.Model.findCarousel();
+
+      if (activeCarousel?.container) container = activeCarousel.container;
 
       const cards = window.NFLX.Model.getCards(container);
-      const before = collected.size;
+      const previousCardCount = collectedCards.size;
 
       for (const card of cards) {
-        if (!collected.has(card.key)) collected.set(card.key, card);
+        const existing = collectedCards.get(card.key);
+
+        if (!existing) {
+          collectedCards.set(card.key, card);
+        } else if (card.hasLeavingBadge && !existing.hasLeavingBadge) {
+          existing.hasLeavingBadge = true;
+        }
       }
 
-      const added = collected.size - before;
+      const newCardsAdded = collectedCards.size - previousCardCount;
+      idleScans = newCardsAdded === 0 ? idleScans + 1 : 0;
 
-      scansWithoutNewTitles = added === 0 ? scansWithoutNewTitles + 1 : 0;
+      // Force Netflix to render the UI arrows by simulating a user hover
+      try {
+        container.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        container.dispatchEvent(new MouseEvent("mouseenter"));
+      } catch {}
 
-      const next = window.NFLX.Model.findNextControl(container);
-      if (!next) break;
+      const nextArrows = window.NFLX.Model.findNextControls(container);
+
+      if (!nextArrows || nextArrows.length === 0) break;
 
       try {
-        next.click();
-      } catch (error) {
-        break;
-      }
-
-      await sleep(850);
+        nextArrows[nextArrows.length - 1].click();
+      } catch {}
+      await sleep(750);
     }
 
-    const allCards = [...collected.values()];
-    const refreshed = window.NFLX.Model.findCarousel() || found;
+    const finalCarousel = window.NFLX.Model.findCarousel();
+
+    if (finalCarousel?.container) container = finalCarousel.container;
+
+    for (const card of window.NFLX.Model.getCards(container)) {
+      const existing = collectedCards.get(card.key);
+
+      if (!existing) collectedCards.set(card.key, card);
+      else if (card.hasLeavingBadge) existing.hasLeavingBadge = true;
+    }
+
+    const finalCarouselState =
+      window.NFLX.Model.findCarousel() || initialCarousel;
 
     return {
-      cards: allCards,
+      cards: [...collectedCards.values()],
       scanned: true,
-      heading: refreshed.heading,
-      container: refreshed.container,
+      heading: finalCarouselState.heading,
+      container: finalCarouselState.container,
     };
   };
 
@@ -75,8 +93,7 @@
       const scanResult = await scanList();
       const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
 
-      // Filter and sort the cards that are leaving soon
-      const titles = scanResult.cards
+      const leavingSoonTitles = scanResult.cards
         .filter(
           (card) =>
             card.id && (card.hasLeavingBadge || leavingSoonData.has(card.id)),
@@ -87,7 +104,7 @@
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 
-      if (scanResult.scanned) {
+      if (scanResult.scanned && scanResult.heading) {
         window.NFLX.View.buildGrid(
           scanResult.heading,
           scanResult.container,
@@ -96,7 +113,7 @@
       }
 
       window.NFLX.View.buildAndShowModal({
-        titles,
+        titles: leavingSoonTitles,
         scanned: scanResult.scanned,
       });
     } catch (error) {
