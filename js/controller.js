@@ -4,10 +4,13 @@
 //
 //  Created by Daniel McFarlane on 10/06/2025
 //
-//  Orchestrates the scrolling logic and connects the Model to the View.
+//  Orchestrates the scrolling logic and connects the Model to the View
 //
 
 (async function () {
+  const ALLOW_DATA_ONLY_MATCHES = true; // Include network/script matches even when no visible badge is found
+  const DEBUG = false; // Log matched titles to the console
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const scanList = async () => {
@@ -46,7 +49,7 @@
       const newCardsAdded = collectedCards.size - previousCardCount;
       idleScans = newCardsAdded === 0 ? idleScans + 1 : 0;
 
-      // Force Netflix to render the UI arrows by simulating a user hover
+      // Trigger hover-dependent controls that Netflix may not render otherwise
       try {
         container.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
         container.dispatchEvent(new MouseEvent("mouseenter"));
@@ -93,12 +96,31 @@
       const scanResult = await scanList();
       const leavingSoonData = window.NFLX.Model.getLeavingSoonDetails();
 
-      const leavingSoonTitles = scanResult.cards
-        .filter(
-          (card) =>
-            card.id && (card.hasLeavingBadge || leavingSoonData.has(card.id)),
-        )
+      const candidates = scanResult.cards
+        .filter((card) => card.id)
         .map((card) => ({
+          card,
+          viaDom: card.hasLeavingBadge,
+          viaData: leavingSoonData.has(card.id),
+        }))
+        .filter(
+          ({ viaDom, viaData }) =>
+            viaDom || (ALLOW_DATA_ONLY_MATCHES && viaData),
+        );
+
+      if (DEBUG) {
+        console.table(
+          candidates.map(({ card, viaDom, viaData }) => ({
+            title: card.title,
+            id: card.id,
+            badgeInDom: viaDom,
+            inNetworkOrScriptData: viaData,
+          })),
+        );
+      }
+
+      const leavingSoonTitles = candidates
+        .map(({ card }) => ({
           id: card.id,
           title: card.title || leavingSoonData.get(card.id)?.title || "",
         }))

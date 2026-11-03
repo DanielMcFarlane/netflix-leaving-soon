@@ -4,13 +4,17 @@
 //
 //  Created by Daniel McFarlane on 10/06/2025
 //
-//  Handles data extraction from the Netflix DOM.
+//  Handles data extraction from the Netflix DOM
 //
 
 window.NFLX = window.NFLX || {};
 
 window.NFLX.Model = (function () {
-  const LEAVING_REGEX = /leaving(?:[.\s_-]|%2e|%20)?soon/i;
+  const LEAVING_REGEX = /leaving(?:[.\s\_-]|%2e|%20)?soon/i;
+
+  // Match entity definitions rather than references so each entity's fields
+  const ENTITY_DEFINITION_REGEX =
+    /(?:\\x22|\\\\"|")([A-Za-z]+):(\d+)([^"\\]*?)(?:\\x22|\\\\"|")\s*:\s*\\{/g;
 
   const getLeavingSoonDetails = () => {
     const leavingSoonMap = new Map();
@@ -21,49 +25,55 @@ window.NFLX.Model = (function () {
 
       if (!LEAVING_REGEX.test(scriptText)) continue;
 
-      const videoIdRegex = /Video:(\d+)(?:_|\b)/g;
-      const videoIdPositions = [];
+      const entities = [];
+      ENTITY_DEFINITION_REGEX.lastIndex = 0;
       let match;
 
-      while ((match = videoIdRegex.exec(scriptText)) !== null) {
-        videoIdPositions.push({ id: match[1], index: match.index });
+      while ((match = ENTITY_DEFINITION_REGEX.exec(scriptText)) !== null) {
+        entities.push({
+          type: match[1],
+          id: match[2],
+          start: match.index + match[0].length,
+          keyStart: match.index,
+        });
       }
 
-      // Isolate the text for each video so data doesn't mix
-      for (let i = 0; i < videoIdPositions.length; i++) {
-        const { id: videoId, index: startIndex } = videoIdPositions[i];
+      for (let i = 0; i < entities.length; i++) {
+        const entity = entities[i];
+        if (entity.type !== "Video") continue;
+
         const endIndex = Math.min(
-          videoIdPositions[i + 1]
-            ? videoIdPositions[i + 1].index
-            : scriptText.length,
-          startIndex + 20000,
+          entities[i + 1] ? entities[i + 1].keyStart : scriptText.length,
+          entity.start + 20000,
         );
-        const videoTextRegion = scriptText.slice(startIndex, endIndex);
+        const videoTextRegion = scriptText.slice(entity.start, endIndex);
 
         if (!LEAVING_REGEX.test(videoTextRegion)) continue;
 
         let videoTitle = null;
-        const titleMatchResult = videoTextRegion.match(
-          /"displayString":"((?:\\.|[^"\\])*)"/,
-        );
-
-        if (titleMatchResult) {
+        for (const titleMatch of videoTextRegion.matchAll(
+          /"displayString":"((?:\\.|[^"\\])*)"/g,
+        )) {
+          let candidate;
           try {
-            videoTitle = JSON.parse(`"${titleMatchResult[1]}"`);
+            candidate = JSON.parse(`"${titleMatch[1]}"`);
           } catch {
-            videoTitle = titleMatchResult[1];
+            candidate = titleMatch[1];
+          }
+          if (!LEAVING_REGEX.test(candidate)) {
+            videoTitle = candidate;
+            break;
           }
         }
 
-        const existingRecord = leavingSoonMap.get(videoId);
-        leavingSoonMap.set(videoId, {
-          id: videoId,
-          title: existingRecord?.title || videoTitle || videoId,
+        const existingRecord = leavingSoonMap.get(entity.id);
+        leavingSoonMap.set(entity.id, {
+          id: entity.id,
+          title: existingRecord?.title || videoTitle || entity.id,
         });
       }
     }
 
-    // Merge titles captured by hook.js from dynamically loaded network responses
     try {
       const rawInjectedData =
         document.documentElement.getAttribute("data-nflx-leaving");
@@ -88,7 +98,6 @@ window.NFLX.Model = (function () {
       (element) =>
         element.children.length === 0 &&
         element.textContent.trim() === "My List" &&
-        // Ignore the main site navigation menu
         !element.closest('nav, header, [role="navigation"], [role="menubar"]'),
     );
   };
@@ -107,7 +116,7 @@ window.NFLX.Model = (function () {
       }
     }
 
-    // Handle regional languages by falling back to the URL path
+    // Use the URL to identify My List when the heading is localised
     if (/my-list/i.test(location.pathname)) {
       const firstVirtualSlot = document.querySelector("[data-virtual-slot]");
 
@@ -120,6 +129,26 @@ window.NFLX.Model = (function () {
     }
 
     return null;
+  };
+
+  const slotHasLeavingBadge = (slotElement) => {
+    const badgeAttributes = ["aria-label", "data-uia", "title"];
+
+    for (const element of slotElement.querySelectorAll("*")) {
+      if (element.children.length === 0) {
+        const text = (element.textContent || "").trim();
+        if (text && text.length <= 40 && LEAVING_REGEX.test(text)) return true;
+      }
+
+      for (const attribute of badgeAttributes) {
+        const value = element.getAttribute(attribute);
+        if (value && value.length <= 60 && LEAVING_REGEX.test(value)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   };
 
   const getCards = (carouselContainer) => {
@@ -138,28 +167,11 @@ window.NFLX.Model = (function () {
 
       const cardImage = slotElement.querySelector("img");
 
-      // Record cards even if their images have not loaded yet
       const uniqueKey = videoId || cardUrl || cardImage?.src || "";
 
       if (!uniqueKey) continue;
 
-      let hasLeavingBadge = false;
-      try {
-        hasLeavingBadge =
-          LEAVING_REGEX.test(slotElement.textContent || "") ||
-          LEAVING_REGEX.test(slotElement.innerHTML || "") ||
-          LEAVING_REGEX.test(
-            (() => {
-              try {
-                return decodeURIComponent(slotElement.innerHTML || "");
-              } catch {
-                return "";
-              }
-            })(),
-          );
-      } catch {
-        hasLeavingBadge = false;
-      }
+      const hasLeavingBadge = slotHasLeavingBadge(slotElement);
 
       extractedCards.push({
         key: uniqueKey,
@@ -189,7 +201,6 @@ window.NFLX.Model = (function () {
     element.getAttribute("aria-disabled") === "true" ||
     element.hasAttribute("disabled");
 
-  // Ignore buttons inside title cards to prevent accidental clicks
   const findNextControls = (carouselContainer) => {
     const buttonCandidates = [
       ...carouselContainer.querySelectorAll('button, [role="button"]'),
